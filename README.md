@@ -31,46 +31,60 @@ clause.
 
 ## Why the state machine matters
 
-A verdict alone would be a thin wrapper. The contract is what makes the verdict usable:
+A verdict alone would be a thin wrapper. The contract is what makes the verdict usable, and each rule below
+exists because a verdict is only true of the exact text it was computed on:
 
-- a new draft from the counterparty invalidates the previous classification **and both signatures**, because a
-  signature on "no disputes" means nothing once the text moved underneath it;
-- signing is only allowed after a merge that found **zero** disputes, so a party cannot sign a text that was
-  never compared;
-- rounds are capped at eight, so a counterparty cannot keep rewriting forever;
+- every draft change moves `rev`, and a merge stores the revision it classified in `merged_rev`. Signing
+  requires `merged_rev == rev`, so a revised draft cannot be signed on the old verdict, even when that verdict
+  said "nothing disputed" and even when the case still looks clean in `disputed`;
+- `is_ready` and `to_sign` use the same test, so the read side never advertises a case whose verdict is older
+  than its text;
+- only the two parties may merge. A merge is the parties' own action, so a passer-by cannot burn one of the
+  eight rounds, and there is no outsider who can wipe a signature by calling `merge`;
+- a revision is merged once: calling `merge` again on unchanged drafts is refused rather than burning a round
+  and clearing the other side's signature for nothing;
+- a malformed verdict stops the round. A missing `disputed` key, a value that is not a list, an entry that is
+  not a clause number or a number that no clause has is an error, not an empty dispute list: dropping bad
+  entries would turn a broken answer into permission to sign;
 - both signatures must land, then the case closes and `final_text` is fixed.
 
 ## Live
 
-- Contract (Studio Network): `0x4D5d5712a6D0807F2ACAc858aa7b6300FeAd7Bce`
-- Explorer: https://explorer-studio.genlayer.com/address/0x4D5d5712a6D0807F2ACAc858aa7b6300FeAd7Bce
+- Contract (Studio Network): `0xa673103C148C7ECf85685b6e5F3071B0E7f77c61`
+- Explorer: https://explorer-studio.genlayer.com/address/0xa673103C148C7ECf85685b6e5F3071B0E7f77c61
 
 ## A real negotiation on the live contract
 
-Two accounts, three clauses. The drafts agree on delivery and price, and disagree because one says seven days
-notice and the other says thirty.
+Two accounts and a stranger, three clauses. The drafts agree on delivery and price and disagree on the
+termination notice. Case `deal-e2e-2`, every merge a real consensus round with a live model.
 
 | what | transaction |
 | --- | --- |
-| deploy `0x4D5d5712a6D0807F2ACAc858aa7b6300FeAd7Bce` | `0x1376883baf41094b1306c4ed8e11ff5912236ac03aedefc3f856117652b9deec` |
-| `open_case` proposer writes 1..3 | `0x7120e6945fcd542d65b16e438b0796148e7897af66fb902d3da72d8c039f4d1b` |
-| `counter` counterparty writes its draft | `0xea02f6f807257bf3cea257de2bdbd1c74128c6cfbf62d61b8a845f7a8db02a90` |
-| `merge` round 1 → **disputed: [3]**, 61s | `0x58e575a2e3d41c4084f876d5bf3d5d9b47b81f10ea15882d158e16d759521783` |
-| `counter` the counterparty revises clause 3 | `0x68ee2981554ccaa3146e493b256e3719c09c266d4b4c6bb01ea157118c4c1077` |
-| `merge` round 2 → **disputed: []**, ready, 51s | `0xe1d508e6eb2a72efee5447608676c426d39771c72cfe40192f60c9f7e21db5cc` |
-| `accept` proposer | `0x1d78713e002b9129ada59c9da0afadd8ed6bf2b0328d1808fc56cb94b747772a` |
-| `accept` counterparty → **state: agreed** | `0x3409019df47ebdd0eb137876e1079b8b345ff0eee92e6ac3530cd8abf012ee35` |
+| deploy `0xa673103C148C7ECf85685b6e5F3071B0E7f77c61` | `0xef2623979727b94c96ad89500ca0b276860f6d5c21269ad81f7bfb5ea4cee60f` |
+| `open_case` proposer writes 1..3 (rev 1) | `0x6e310fa33032d06f3664ab5a527c8b9c2e55092a808b36a7c232114a4518b21e` |
+| `counter` counterparty writes its draft (rev 2) | `0x9267a28c0ebe2ff95bd880b583d1eab0c2ce71fc5554f85aaa6a421c6b52dedf` |
+| `merge` round 1 → **disputed: [3]**, 50s | `0x4b980c1e2974dc293bfc13b4be5849a468fb1d958b99ba9710e0cd687ce92f90` |
+| a stranger calls `merge` → **refused**, round stays 1 | `0x04298552941ea77b763af66c4913afc4c4d5f121a5f20789237abf5b6a2545d7` |
+| `counter` counterparty revises clause 3 (rev 3) | `0xdeb0b3f1820ab4ff54a6acf5874eef6e8ac873b59341889a85735f3fb66fff42` |
+| `accept` proposer on the revised draft → **refused**, the verdict predates the rewrite | `0x32078e9d3995668da0b7c10eb435696a1566ab2d7b7c12d2aeec05e4ffe4da76` |
+| `merge` round 2 → **disputed: []**, ready, 50s | `0x66507d0108035c7cacc7ae8dd52fa4121864c83c325fcc6c98c95c9a2eade69b` |
+| `merge` again on the same revision → **refused**, no round burned | `0xfd0a91e8fc75891c156e75c21074c58f3a5e67dd1bf5ddfcc058417035506828` |
+| `accept` proposer | `0x5a54396b21cd9c3739bde1e47dab93c8d72001eb6d7b392040070c6dcf99a10b` |
+| `accept` counterparty → **state: agreed** | `0x86d097b357c739fddac88f815eeae462893d3a6837d6d0af846b1561be9e123b` |
 
-After the rewrite the case is `stale` with `disputed: []`, and `is_ready` is false until the second merge
-leaves nothing in dispute — that is the signature-invalidation rule doing its job on chain.
+What the two refusals show, in the same case that ends `agreed`: after the rewrite `is_ready` was false and
+`to_sign` empty while `disputed` was already `[]`, so the only reason the case was not signable was that the
+verdict was older than the text. The stranger's merge and the replay both reverted with the round counter
+unchanged, so neither can burn the eight rounds or wipe a signature.
 
 ## Flow
 
 1. `open_case(case_id, draft, counterparty)` — clauses are one per line, numbers are positional.
 2. `counter(case_id, draft)` — only the named counterparty; resets the classification and the signatures.
-3. `merge(case_id)` — anyone may trigger it; validators classify each clause number. Returns `disputed` and
-   `ready_to_sign`.
-4. `accept(case_id)` — either party, only after a clean merge. Two signatures close the case.
+3. `merge(case_id)` — either party; validators classify each clause number. Returns `disputed`,
+   `ready_to_sign` and the revision it covered. One merge per revision, eight rounds per case.
+4. `accept(case_id)` — either party, only when the current revision was merged with nothing in dispute. Two
+   signatures close the case.
 5. `get_case`, `is_ready`, `to_sign(address)`, `case_count`, `stats`.
 
 Limits are deliberate: 40 clauses, 400 characters each, 8 rounds. Enough for a real agreement, small enough
@@ -86,19 +100,33 @@ that a validator reading it cannot drift.
 ## Tests
 
 ```bash
-python -m pytest tests/direct -q     # 15 passed
+python -m pytest tests/direct -q     # 22 passed
 ```
 
 They cover the clause parser (empty lines, the 400 character ceiling, the 40 clause ceiling), the two-party
 rule, the counterparty-only rule, dispute reporting, the round cap, signing before a merge, signing a disputed
 merge, outsiders signing, two signatures closing the case, and the rewrite that voids an existing signature.
 
+Three classes pin the review asks:
+
+- `TestMalformedVerdict` — a missing dispute list, a list that is not a list, an entry that is not a number and
+  a clause number that does not exist each revert the merge and leave the round at 0, so a broken answer can
+  never read as "nothing disputed";
+- `TestMerge::test_only_the_parties_merge` and `test_the_same_drafts_are_not_merged_twice` — a stranger's merge
+  is refused and the round counter does not move; a replay on unchanged drafts is refused and the existing
+  signature survives;
+- `TestAccept::test_a_revised_draft_cannot_be_signed_on_the_old_verdict` — after a clean merge, a rewrite makes
+  `is_ready` false, empties `to_sign`, refuses `accept`, and only a new merge on the new revision can be signed.
+
+The seven tests in those asks fail against the previous contract (`git show HEAD:contracts/clause_merge.py`),
+so they pin the defects rather than the current behaviour.
+
 ## Deploy and run
 
 ```bash
 npm install
 node scripts/deploy_studionet.js
-node scripts/e2e_studionet.js 0x4D5d5712a6D0807F2ACAc858aa7b6300FeAd7Bce
+node scripts/e2e_studionet.js 0xa673103C148C7ECf85685b6e5F3071B0E7f77c61
 ```
 
 ## Layout

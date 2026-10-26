@@ -44,6 +44,10 @@ def mock_merge(direct_vm, disputed):
     direct_vm.mock_llm(r"You are comparing two drafts", payload)
 
 
+def mock_raw(direct_vm, payload):
+    direct_vm.mock_llm(r"You are comparing two drafts", payload)
+
+
 class TestOpen:
     def test_a_case_starts_open_with_one_draft(self, direct_vm, direct_deploy, direct_alice, direct_bob):
         contract = deploy(direct_deploy)
@@ -146,15 +150,45 @@ class TestMerge:
     def test_each_merge_burns_a_round(self, direct_vm, direct_deploy, direct_alice, direct_bob):
         contract = deploy(direct_deploy)
         open_case(contract, direct_vm, direct_alice, direct_bob)
+        mock_merge(direct_vm, [2])
+        for expected in range(1, 9):
+            direct_vm.sender = direct_bob
+            contract.counter("deal-1", DRAFT_B_DIFFERENT)
+            direct_vm.sender = direct_alice
+            assert contract.merge("deal-1")["round"] == str(expected)
+        direct_vm.sender = direct_bob
+        contract.counter("deal-1", DRAFT_B_DIFFERENT)
+        direct_vm.sender = direct_alice
+        with direct_vm.expect_revert("ran out of rounds"):
+            contract.merge("deal-1")
+
+    def test_only_the_parties_merge(self, direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
+        contract = deploy(direct_deploy)
+        open_case(contract, direct_vm, direct_alice, direct_bob)
         direct_vm.sender = direct_bob
         contract.counter("deal-1", DRAFT_B_DIFFERENT)
         mock_merge(direct_vm, [2])
 
-        direct_vm.sender = direct_alice
-        for expected in range(1, 9):
-            assert contract.merge("deal-1")["round"] == str(expected)
-        with direct_vm.expect_revert("ran out of rounds"):
+        direct_vm.sender = direct_charlie
+        with direct_vm.expect_revert("only the two parties merge"):
             contract.merge("deal-1")
+        assert contract.get_case("deal-1")["round"] == "0"
+
+    def test_the_same_drafts_are_not_merged_twice(self, direct_vm, direct_deploy, direct_alice, direct_bob):
+        contract = deploy(direct_deploy)
+        open_case(contract, direct_vm, direct_alice, direct_bob)
+        direct_vm.sender = direct_bob
+        contract.counter("deal-1", DRAFT_B_SAME)
+        mock_merge(direct_vm, [])
+        direct_vm.sender = direct_alice
+        contract.merge("deal-1")
+        contract.accept("deal-1")
+        assert contract.get_case("deal-1")["signed_a"] is True
+
+        with direct_vm.expect_revert("already merged"):
+            contract.merge("deal-1")
+        assert contract.get_case("deal-1")["round"] == "1"
+        assert contract.get_case("deal-1")["signed_a"] is True
 
 
 class TestAccept:
@@ -188,6 +222,43 @@ class TestAccept:
 
         direct_vm.sender = direct_charlie
         with direct_vm.expect_revert("only the two parties"):
+            contract.accept("deal-1")
+
+    def test_a_revised_draft_cannot_be_signed_on_the_old_verdict(
+        self, direct_vm, direct_deploy, direct_alice, direct_bob
+    ):
+        contract = deploy(direct_deploy)
+        open_case(contract, direct_vm, direct_alice, direct_bob)
+        direct_vm.sender = direct_bob
+        contract.counter("deal-1", DRAFT_B_SAME)
+        mock_merge(direct_vm, [])
+
+        direct_vm.sender = direct_alice
+        contract.merge("deal-1")
+        contract.accept("deal-1")
+        assert contract.is_ready("deal-1") is True
+
+        # The counterparty rewrites clause 3 after the clean merge. The old verdict
+        # described text that no longer exists, so nothing is signable until a new
+        # merge covers the new revision.
+        direct_vm.sender = direct_bob
+        contract.counter("deal-1", DRAFT_B_DIFFERENT)
+        case = contract.get_case("deal-1")
+        assert case["disputed"] == []
+        assert case["rev"] == "3"
+        assert case["merged_rev"] == "2"
+        assert contract.is_ready("deal-1") is False
+        assert contract.to_sign(address(direct_bob)) == []
+
+        with direct_vm.expect_revert("sign only after a merge of the current drafts"):
+            contract.accept("deal-1")
+
+        direct_vm.clear_mocks()
+        mock_merge(direct_vm, [3])
+        direct_vm.sender = direct_alice
+        contract.merge("deal-1")
+        assert contract.is_ready("deal-1") is False
+        with direct_vm.expect_revert("nothing disputed"):
             contract.accept("deal-1")
 
     def test_two_signatures_close_the_case(self, direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -225,3 +296,59 @@ class TestAccept:
         assert case["signed_a"] is False
         assert case["state"] == "stale"
         assert contract.is_ready("deal-1") is False
+
+
+class TestMalformedVerdict:
+    """A broken answer must stop the round, not read as "nothing disputed"."""
+
+    def setup_case(self, direct_vm, contract, direct_alice, direct_bob):
+        open_case(contract, direct_vm, direct_alice, direct_bob)
+        direct_vm.sender = direct_bob
+        contract.counter("deal-1", DRAFT_B_DIFFERENT)
+        direct_vm.sender = direct_alice
+
+    def test_missing_dispute_list_is_rejected(self, direct_vm, direct_deploy, direct_alice, direct_bob):
+        contract = deploy(direct_deploy)
+        self.setup_case(direct_vm, contract, direct_alice, direct_bob)
+        mock_raw(direct_vm, json.dumps({"why": {"3": "differs"}}))
+
+        with direct_vm.expect_revert("no dispute list"):
+            contract.merge("deal-1")
+        case = contract.get_case("deal-1")
+        assert case["round"] == "0"
+        assert contract.is_ready("deal-1") is False
+
+    def test_a_dispute_list_that_is_not_a_list_is_rejected(
+        self, direct_vm, direct_deploy, direct_alice, direct_bob
+    ):
+        contract = deploy(direct_deploy)
+        self.setup_case(direct_vm, contract, direct_alice, direct_bob)
+        mock_raw(direct_vm, json.dumps({"disputed": "3"}))
+
+        with direct_vm.expect_revert("not a list"):
+            contract.merge("deal-1")
+        assert contract.get_case("deal-1")["round"] == "0"
+
+    def test_an_entry_that_is_not_a_number_is_rejected(
+        self, direct_vm, direct_deploy, direct_alice, direct_bob
+    ):
+        contract = deploy(direct_deploy)
+        self.setup_case(direct_vm, contract, direct_alice, direct_bob)
+        mock_raw(direct_vm, json.dumps({"disputed": [3, "third"]}))
+
+        with direct_vm.expect_revert("not a clause number"):
+            contract.merge("deal-1")
+        case = contract.get_case("deal-1")
+        assert case["disputed"] == []
+        assert contract.is_ready("deal-1") is False
+
+    def test_a_clause_number_that_does_not_exist_is_rejected(
+        self, direct_vm, direct_deploy, direct_alice, direct_bob
+    ):
+        contract = deploy(direct_deploy)
+        self.setup_case(direct_vm, contract, direct_alice, direct_bob)
+        mock_raw(direct_vm, json.dumps({"disputed": [99]}))
+
+        with direct_vm.expect_revert("does not exist"):
+            contract.merge("deal-1")
+        assert contract.get_case("deal-1")["round"] == "0"

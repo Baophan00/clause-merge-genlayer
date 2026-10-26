@@ -22,8 +22,15 @@ Lifecycle
     open_case   proposer writes clause numbers 1..n, one per line
     counter     the named counterparty writes its own draft
     merge       validators classify every clause number: same / disputed
-    accept      each side signs, only when the last merge found nothing disputed
+    accept      each side signs, only when the current drafts were merged clean
     final_text  the signed text, available once both signatures are in
+
+Every write that changes a draft moves `rev`, and a merge records the revision it
+covered in `merged_rev`. A signature is therefore tied to the exact text that was
+classified: rewriting a clause after a clean merge makes the case stale again and the
+old verdict cannot be signed. Merges are the parties' own action, so an outsider
+cannot burn the eight rounds, and a revision is merged once, so no party can clear the
+other's signature by replaying the same call.
 """
 
 import json
@@ -50,6 +57,8 @@ class Case:
     draft_b: str
     disputed: str          # comma separated clause numbers, "" when the drafts match
     round: u256
+    rev: u256              # draft revision, moves on open and on every counter
+    merged_rev: u256       # the revision the last merge actually classified
     state: str
     signed_a: bool
     signed_b: bool
@@ -127,18 +136,48 @@ class ClauseMerge(gl.Contract):
                 verdict = json.loads(verdict)
             except Exception as exc:
                 raise gl.vm.UserError(f"the validators did not return JSON: {exc}")
+        if not isinstance(verdict, dict):
+            raise gl.vm.UserError("the validators did not return a dispute object")
+        if "disputed" not in verdict:
+            raise gl.vm.UserError("the validators returned no dispute list")
 
-        raw = verdict.get("disputed", []) if isinstance(verdict, dict) else []
+        raw = verdict["disputed"]
+        if not isinstance(raw, list):
+            raise gl.vm.UserError("the dispute list is not a list")
+
         total = max(len(a), len(b))
         out = []
         for item in raw:
+            # An unreadable entry is not the same as "no dispute": dropping it would
+            # turn a broken answer into permission to sign. Reject the whole round and
+            # leave the case where it was.
+            if isinstance(item, bool) or not isinstance(item, (int, str)):
+                raise gl.vm.UserError(
+                    f"the dispute list contains {item!r}, which is not a clause number"
+                )
             try:
                 number = int(item)
             except Exception:
-                continue
-            if 1 <= number <= total and number not in out:
+                raise gl.vm.UserError(
+                    f"the dispute list contains {item!r}, which is not a clause number"
+                )
+            if not (1 <= number <= total):
+                raise gl.vm.UserError(
+                    f"the dispute list names clause {number}, which does not exist"
+                )
+            if number not in out:
                 out.append(number)
         return sorted(out)
+
+    @staticmethod
+    def _signable(case: Case) -> bool:
+        """True only when the verdict on the table covers the drafts on the table."""
+        return (
+            case.state == OPEN
+            and int(case.round) > 0
+            and len(case.disputed) == 0
+            and int(case.merged_rev) == int(case.rev)
+        )
 
     @staticmethod
     def _quoted(clauses: list, disputed: list) -> str:
@@ -167,6 +206,8 @@ class ClauseMerge(gl.Contract):
             draft_b="",
             disputed="",
             round=u256(0),
+            rev=u256(1),
+            merged_rev=u256(0),
             state=OPEN,
             signed_a=False,
             signed_b=False,
@@ -185,8 +226,10 @@ class ClauseMerge(gl.Contract):
         self._clauses(draft)
 
         case.draft_b = draft.strip()
-        # A new draft invalidates the previous classification and any signature.
+        # A new draft invalidates the previous classification and any signature: the
+        # verdict in `disputed` described text that no longer exists.
         case.disputed = ""
+        case.rev = case.rev + u256(1)
         case.state = STALE
         case.signed_a = False
         case.signed_b = False
@@ -200,6 +243,12 @@ class ClauseMerge(gl.Contract):
             raise gl.vm.UserError("the counterparty has not written a draft yet")
         if case.state == AGREED:
             raise gl.vm.UserError("this case is already signed")
+        if self._sender() not in (case.proposer, case.counterparty):
+            raise gl.vm.UserError("only the two parties merge their drafts")
+        if int(case.merged_rev) == int(case.rev):
+            # Replaying a merge on unchanged text would burn a round and wipe the
+            # other side's signature for nothing.
+            raise gl.vm.UserError("these drafts were already merged")
         if int(case.round) >= MAX_ROUNDS:
             raise gl.vm.UserError("this case ran out of rounds")
 
@@ -209,6 +258,7 @@ class ClauseMerge(gl.Contract):
 
         case.disputed = self._quoted(a, disputed)
         case.round = case.round + u256(1)
+        case.merged_rev = case.rev
         case.state = OPEN if len(disputed) == 0 else STALE
         case.signed_a = False
         case.signed_b = False
@@ -227,8 +277,10 @@ class ClauseMerge(gl.Contract):
         case = self._load(case_id)
         if case.state == AGREED:
             raise gl.vm.UserError("this case is already signed")
-        if len(case.disputed) != 0 or int(case.round) == 0:
-            raise gl.vm.UserError("sign only after a merge with nothing disputed")
+        if len(case.disputed) != 0 or int(case.round) == 0 or int(case.merged_rev) != int(case.rev):
+            raise gl.vm.UserError(
+                "sign only after a merge of the current drafts with nothing disputed"
+            )
         sender = self._sender()
         if sender == case.proposer:
             case.signed_a = True
@@ -260,6 +312,8 @@ class ClauseMerge(gl.Contract):
             "proposer": case.proposer,
             "counterparty": case.counterparty,
             "round": str(case.round),
+            "rev": str(case.rev),
+            "merged_rev": str(case.merged_rev),
             "state": case.state,
             "disputed": [int(x) for x in case.disputed.split(",") if x.strip()],
             "signed_a": case.signed_a,
@@ -273,7 +327,7 @@ class ClauseMerge(gl.Contract):
     @gl.public.view
     def is_ready(self, case_id: str) -> bool:
         case = self._load(case_id)
-        return case.state == OPEN and int(case.round) > 0 and len(case.disputed) == 0
+        return self._signable(case)
 
     @gl.public.view
     def to_sign(self, who: Address) -> list:
@@ -285,7 +339,7 @@ class ClauseMerge(gl.Contract):
                 continue
             if case.proposer != target and case.counterparty != target:
                 continue
-            if len(case.disputed) == 0 and int(case.round) > 0:
+            if self._signable(case):
                 out.append(case_id)
         return out
 
