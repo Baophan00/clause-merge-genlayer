@@ -50,27 +50,27 @@ exists because a verdict is only true of the exact text it was computed on:
 
 ## Live
 
-- Contract (Studio Network): `0xa673103C148C7ECf85685b6e5F3071B0E7f77c61`
-- Explorer: https://explorer-studio.genlayer.com/address/0xa673103C148C7ECf85685b6e5F3071B0E7f77c61
+- Contract (Studio Network): `0xc8bF1070CA6916E79979c3C57E4d1780607431CF`
+- Explorer: https://explorer-studio.genlayer.com/address/0xc8bF1070CA6916E79979c3C57E4d1780607431CF
 
 ## A real negotiation on the live contract
 
 Two accounts and a stranger, three clauses. The drafts agree on delivery and price and disagree on the
-termination notice. Case `deal-e2e-2`, every merge a real consensus round with a live model.
+termination notice. Case `mismatchb`, every merge a real consensus round with a live model.
 
 | what | transaction |
 | --- | --- |
-| deploy `0xa673103C148C7ECf85685b6e5F3071B0E7f77c61` | `0xef2623979727b94c96ad89500ca0b276860f6d5c21269ad81f7bfb5ea4cee60f` |
-| `open_case` proposer writes 1..3 (rev 1) | `0x6e310fa33032d06f3664ab5a527c8b9c2e55092a808b36a7c232114a4518b21e` |
-| `counter` counterparty writes its draft (rev 2) | `0x9267a28c0ebe2ff95bd880b583d1eab0c2ce71fc5554f85aaa6a421c6b52dedf` |
-| `merge` round 1 → **disputed: [3]**, 50s | `0x4b980c1e2974dc293bfc13b4be5849a468fb1d958b99ba9710e0cd687ce92f90` |
-| a stranger calls `merge` → **refused**, round stays 1 | `0x04298552941ea77b763af66c4913afc4c4d5f121a5f20789237abf5b6a2545d7` |
-| `counter` counterparty revises clause 3 (rev 3) | `0xdeb0b3f1820ab4ff54a6acf5874eef6e8ac873b59341889a85735f3fb66fff42` |
-| `accept` proposer on the revised draft → **refused**, the verdict predates the rewrite | `0x32078e9d3995668da0b7c10eb435696a1566ab2d7b7c12d2aeec05e4ffe4da76` |
-| `merge` round 2 → **disputed: []**, ready, 50s | `0x66507d0108035c7cacc7ae8dd52fa4121864c83c325fcc6c98c95c9a2eade69b` |
-| `merge` again on the same revision → **refused**, no round burned | `0xfd0a91e8fc75891c156e75c21074c58f3a5e67dd1bf5ddfcc058417035506828` |
-| `accept` proposer | `0x5a54396b21cd9c3739bde1e47dab93c8d72001eb6d7b392040070c6dcf99a10b` |
-| `accept` counterparty → **state: agreed** | `0x86d097b357c739fddac88f815eeae462893d3a6837d6d0af846b1561be9e123b` |
+| deploy `0xc8bF1070CA6916E79979c3C57E4d1780607431CF` | `0xe41f4d78105e315f8d6385983df6042f1e110b17843866908c0a86461892cf29` |
+| `open_case` proposer writes 1..3 (rev 1) | `0x58a5eb7bbd839b9ccdf73cb48c43d2c901d07b768bab823953f03ac459ec2e5f` |
+| `counter` counterparty writes its draft (rev 2) | `0xb29860c37d91ab2c97ab9d7e781c1c1084ba1ecac25d25b7d07dbfca2e268ae5` |
+| `merge` round 1 → **disputed: [3]**, 46s | `0xc8ce8c2bb163e2d84a1c584b4dbb89a69ebd6a2b1541b8c0e1517b9626bace9b` |
+| a stranger calls `merge` → **refused**, round stays 1 | `0x14be24ee7de41ae8eb42fc820fcbe0f8721b5f55961ef316aad3fa4533c3ba46` |
+| `counter` counterparty revises clause 3 (rev 3) | `0xa8f48d43b09ccb23adb828162b68a89bd39276b7313285205c416be121304f59` |
+| `accept` proposer on the revised draft → **refused**, the verdict predates the rewrite | `0x33aa52eee541a6c57addd3bf1d7622bf5520b7091617f2581621b454f0e36605` |
+| `merge` round 2 → **disputed: []**, ready, 56s | `0xc8cbd2de61d9894582d69b540364f9f305190d7bc295370927b345712e75ea16` |
+| `merge` again on the same revision → **refused**, no round burned | `0x8be2e00c27b5a0cd1bef51046f511ea14ddffe63c236b9942782b6d306849e5f` |
+| `accept` proposer | `0xa906f34ef710156cd6ed1e253d6f366458af47751eb5e0073745183f25a44a2a` |
+| `accept` counterparty → **state: agreed** | `0x366c118d8c58cc801e66573b98f636d4e905c54822577f7c6e936e24a5157539` |
 
 What the two refusals show, in the same case that ends `agreed`: after the rewrite `is_ready` was false and
 `to_sign` empty while `disputed` was already `[]`, so the only reason the case was not signable was that the
@@ -126,7 +126,7 @@ so they pin the defects rather than the current behaviour.
 ```bash
 npm install
 node scripts/deploy_studionet.js
-node scripts/e2e_studionet.js 0xa673103C148C7ECf85685b6e5F3071B0E7f77c61
+node scripts/e2e_studionet.js 0xc8bF1070CA6916E79979c3C57E4d1780607431CF
 ```
 
 ## Layout

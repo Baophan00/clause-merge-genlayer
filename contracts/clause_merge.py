@@ -169,8 +169,7 @@ class ClauseMerge(gl.Contract):
                 out.append(number)
         return sorted(out)
 
-    @staticmethod
-    def _signable(case: Case) -> bool:
+    def _signable(self, case: Case) -> bool:
         """True only when the verdict on the table covers the drafts on the table."""
         return (
             case.state == OPEN
@@ -179,8 +178,7 @@ class ClauseMerge(gl.Contract):
             and int(case.merged_rev) == int(case.rev)
         )
 
-    @staticmethod
-    def _quoted(clauses: list, disputed: list) -> str:
+    def _quoted(self, clauses: list, disputed: list) -> str:
         if len(disputed) == 0:
             return ""
         return ", ".join(str(n) for n in disputed)
